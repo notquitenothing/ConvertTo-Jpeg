@@ -22,6 +22,7 @@ Param (
     [Parameter(
         HelpMessage = "Fix extension of JPEG files without the .jpg extension")]
     [Switch]
+    [Alias("f")]
     $FixExtensionIfJpeg,
 
     [Parameter(
@@ -34,7 +35,13 @@ Param (
         HelpMessage = "Also output unconverted image files to the output folder path")]
     [Switch]
     [Alias("u")]
-    $OutputUnconverted
+    $OutputUnconverted,
+
+    [Parameter(
+        HelpMessage = "Remove existing extension of non-JPEG files before adding .jpg")]
+    [Switch]
+    [Alias("r")]
+    $RemoveOriginalExtension
 )
 
 Begin
@@ -115,7 +122,16 @@ Process
                 $inputFolder = AwaitOperation ($inputFile.GetParentAsync()) ([Windows.Storage.StorageFolder])
                 $inputExtension = $inputFile.FileType
                 $outputFolder = $inputFolder
-                $outputFileName = $inputFile.Name + ".jpg";
+                # Determine output file name
+                # Get name of original file, including extension
+                $fileName = $inputFile.Name
+                if ($RemoveOriginalExtension)
+                {
+                    # If removing original extension, get the original file name without the extension
+                    $fileName = $inputFile.DisplayName 
+                }
+                # Add .jpg to the file name
+                $outputFileName = $fileName + ".jpg"
 
                 if ($OutputFolderPath)
                 {
