@@ -3,7 +3,7 @@
 
 Param (
     [Parameter(
-        Mandatory = $true,
+        Mandatory = $false,
         Position = 1,
         ValueFromPipeline = $true,
         ValueFromPipelineByPropertyName = $true,
@@ -14,9 +14,27 @@ Param (
     $Files,
 
     [Parameter(
+        HelpMessage = "Output folder for converted files")]
+    [String]
+    [Alias("o")]
+    $OutputFolderPath,
+
+    [Parameter(
         HelpMessage = "Fix extension of JPEG files without the .jpg extension")]
     [Switch]
-    $FixExtensionIfJpeg
+    $FixExtensionIfJpeg,
+
+    [Parameter(
+        HelpMessage = "Opens dialogs for input files and output folder if not supplied")]
+    [Switch]
+    [Alias("t")]
+    $InteractiveMode,
+
+    [Parameter(
+        HelpMessage = "Also output unconverted image files to the output folder path")]
+    [Switch]
+    [Alias("u")]
+    $OutputUnconverted
 )
 
 Begin
@@ -46,6 +64,43 @@ Begin
 
 Process
 {
+    # If no files were passed and interactive mode, open a file dialog to select them
+    if (!$Files -and $InteractiveMode)
+    {
+        Add-Type -AssemblyName System.Windows.Forms
+        $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{
+            InitialDirectory = [Environment]::GetFolderPath('Desktop') 
+            Title            = "Select Files to Convert"
+            Multiselect      = $true
+            # filter selection to supported filetypes
+            Filter           = "Image Files (*.*)|*.BMP;*.DIB;*.RLE;*.CUR;*.DDS;*.DNG;*.GIF;*.ICO;*.ICON;*.EXIF;*.JFIF;*.JPE;*.JPEG;*.JPG;*.ARW;*.CR2;*.CRW;*.DNG;*.ERF;*.KDC;*.MRW;*.NEF;*.NRW;*.ORF;*.PEF;*.RAF;*.RAW;*.RW2;*.RWL;*.SR2;*.SRW;*.AVCI;*.AVCS;*.HEIC;*.HEICS;*.HEIF;*.HEIFS;*.WEBP;*.PNG;*.TIF;*.TIFF;*.JXR;*.WDP|All files (*.*)|*.*"
+        }
+        $null = $FileBrowser.ShowDialog()
+        $Files = $FileBrowser.FileNames
+        $FileBrowser.Dispose()
+    }
+
+    # If no output folder selected and interactive mode, select a folder with dialog
+    if (!$OutputFolderPath -and $InteractiveMode)
+    {
+        Add-Type -AssemblyName System.Windows.Forms
+        $OutputFolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog -Property @{
+            Description = "Select Folder to Place Converted Files"
+        }
+        $null = $OutputFolderBrowser.ShowDialog()
+        $OutputFolderPath = $OutputFolderBrowser.SelectedPath
+        $OutputFolderBrowser.Dispose()
+
+        # If no OutputFolderPath was selected, Throw Error
+        if (!$OutputFolderPath)
+        {
+            Throw "Output Folder Not Selected."
+        }
+    }
+
+    # Files that failed to be converted
+    $FailedFiles = New-Object -TypeName "System.Collections.ArrayList"
+
     # Summary of imaging APIs: https://docs.microsoft.com/en-us/windows/uwp/audio-video-camera/imaging
     foreach ($file in $Files)
     {
@@ -54,10 +109,18 @@ Process
         {
             try
             {
-                # Get SoftwareBitmap from input file
+                # Get SoftwareBitmap from input file, determine output path
                 $file = Resolve-Path -LiteralPath $file
                 $inputFile = AwaitOperation ([Windows.Storage.StorageFile]::GetFileFromPathAsync($file)) ([Windows.Storage.StorageFile])
                 $inputFolder = AwaitOperation ($inputFile.GetParentAsync()) ([Windows.Storage.StorageFolder])
+                $inputExtension = $inputFile.FileType
+                $outputFolder = $inputFolder
+                $outputFileName = $inputFile.Name + ".jpg";
+
+                if ($OutputFolderPath)
+                {
+                    $outputFolder = AwaitOperation ([Windows.Storage.StorageFolder]::GetFolderFromPathAsync($OutputFolderPath)) ([Windows.Storage.StorageFolder])
+                }
                 $inputStream = AwaitOperation ($inputFile.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
                 $decoder = AwaitOperation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($inputStream)) ([Windows.Graphics.Imaging.BitmapDecoder])
             }
@@ -67,28 +130,49 @@ Process
                 Write-Host " [Unsupported]"
                 continue
             }
+            # Check if image is already a jpg
             if ($decoder.DecoderInformation.CodecId -eq [Windows.Graphics.Imaging.BitmapDecoder]::JpegDecoderId)
             {
-                $extension = $inputFile.FileType
-                if ($FixExtensionIfJpeg -and ($extension -ne ".jpg") -and ($extension -ne ".jpeg"))
+                # Check if jpg files should have their extensions fixed
+                $ExtensionRequiresFix = $FixExtensionIfJpeg -and ($inputExtension -ne ".jpg") -and ($inputExtension -ne ".jpeg")
+                if ($ExtensionRequiresFix)
                 {
-                    # Rename JPEG-encoded files to have ".jpg" extension
-                    $newName = $inputFile.Name -replace ($extension + "$"), ".jpg"
-                    AwaitAction ($inputFile.RenameAsync($newName))
-                    Write-Host " => $newName"
+                    $outputFileName = $inputFile.DisplayName + ".jpg"
                 }
                 else
                 {
-                    # Skip JPEG-encoded files
-                    Write-Host " [Already JPEG]"
+                    $outputFileName = $inputFile.Name
                 }
-                continue
+
+                # If OutputUnconverted and there is an OutputFolderPath
+                # Copy the existing file to the output folder
+                if ($OutputUnconverted -and $OutputFolderPath)
+                {
+                    # Copy input file to output folder
+                    Copy-Item -path $inputFile.Path -Destination $(Join-Path $outputFolder.Path $outputFileName)
+                    Write-Host " => $(Join-Path $outputFolder.Path $outputFileName)"
+                    continue
+                }
+                else
+                {
+                    if ($ExtensionRequiresFix)
+                    {
+                        # Rename JPEG-encoded files to have ".jpg" extension
+                        AwaitAction ($inputFile.RenameAsync($outputFileName))
+                        Write-Host " => $(Join-Path $inputFolder.Path $outputFileName)"
+                    }
+                    else
+                    {
+                        # Skip JPEG-encoded files
+                        Write-Host " [Already JPEG]"
+                    }
+                    continue
+                }
             }
             $bitmap = AwaitOperation ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
 
             # Write SoftwareBitmap to output file
-            $outputFileName = $inputFile.Name + ".jpg";
-            $outputFile = AwaitOperation ($inputFolder.CreateFileAsync($outputFileName, [Windows.Storage.CreationCollisionOption]::ReplaceExisting)) ([Windows.Storage.StorageFile])
+            $outputFile = AwaitOperation ($outputFolder.CreateFileAsync($outputFileName, [Windows.Storage.CreationCollisionOption]::ReplaceExisting)) ([Windows.Storage.StorageFile])
             $outputStream = AwaitOperation ($outputFile.OpenAsync([Windows.Storage.FileAccessMode]::ReadWrite)) ([Windows.Storage.Streams.IRandomAccessStream])
             $encoder = AwaitOperation ([Windows.Graphics.Imaging.BitmapEncoder]::CreateAsync([Windows.Graphics.Imaging.BitmapEncoder]::JpegEncoderId, $outputStream)) ([Windows.Graphics.Imaging.BitmapEncoder])
             $encoder.SetSoftwareBitmap($bitmap)
@@ -96,18 +180,29 @@ Process
 
             # Do it
             AwaitAction ($encoder.FlushAsync())
-            Write-Host " -> $outputFileName"
+            Write-Host " -> $(Join-Path $outputFolder.Path $outputFileName)"
         }
         catch
         {
-            # Report full details
-            throw $_.Exception.ToString()
+            # Report full details and add file to list
+            Write-Error $_.Exception
+            $FailedFiles.Add($file)
         }
         finally
         {
             # Clean-up
             if ($inputStream -ne $null) { [System.IDisposable]$inputStream.Dispose() }
             if ($outputStream -ne $null) { [System.IDisposable]$outputStream.Dispose() }
+        }
+    }
+
+    if ($FailedFiles.Count -gt 0)
+    {
+        Write-Host "The following files failed to convert."
+        Write-Host "You may lack the required extensions or the files may be corrupt."
+        foreach ($file in $FailedFiles)
+        {
+            Write-Host $file
         }
     }
 }
