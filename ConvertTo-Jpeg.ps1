@@ -32,10 +32,15 @@ Param (
     $InteractiveMode,
 
     [Parameter(
-        HelpMessage = "Also output unconverted image files to the output folder path")]
+        HelpMessage = "Also copy unconverted image files to the output folder path")]
     [Switch]
     [Alias("u")]
     $OutputUnconverted,
+
+    [Parameter(
+        HelpMessage = "Do not fail on conversion error, only write exception")]
+    [Switch]
+    $NoFailOnConvert,
 
     [Parameter(
         HelpMessage = "Remove existing extension of non-JPEG files before adding .jpg")]
@@ -200,9 +205,17 @@ Process
         }
         catch
         {
-            # Report full details and add file to list
-            Write-Error $_.Exception
-            $FailedFiles.Add($file)
+            if ($NoFailOnConvert)
+            {
+                # Report full details and add file to list
+                Write-Error $_.Exception
+                $FailedFiles.Add($file)
+            }
+            else
+            {
+                # Report full details
+                throw $_.Exception.ToString()
+            }
         }
         finally
         {

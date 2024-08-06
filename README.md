@@ -91,12 +91,12 @@ C:\T\Pictures\IMG_1234.HEIC -> C:\T\Pictures\IMG_1234.HEIC.jpg
 
 ### Output Unconverted Files
 
-Also outputs existing files that don't require conversion but are images
-if an output path is specified by `-o` flag or InteractiveMode (`-t`).
+Also outputs existing files that don't require conversion but are images if an output path is specified by `-o` flag or InteractiveMode (`-t`).
+Flag is `-OutputUnconverted` (`-u`.)
 This includes existing JPEG-encoded files.
 
 ```PowerShell
-PS C:\T> .\ConvertTo-Jpeg.ps1 -o C:\T\Documents C:\T\Pictures\IMG_1234.HEIC C:\T\Pictures\IMG_ABCD.jpg
+PS C:\T> .\ConvertTo-Jpeg.ps1 -u -o C:\T\Documents C:\T\Pictures\IMG_1234.HEIC C:\T\Pictures\IMG_ABCD.jpg
 C:\T\Pictures\IMG_1234.HEIC -> C:\T\Documents\IMG_1234.HEIC.jpg
 C:\T\Pictures\IMG_ABCD.jpg => C:\T\Documents\IMG_5678.jpg
 ```
